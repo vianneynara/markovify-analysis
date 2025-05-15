@@ -4,6 +4,8 @@ import bisect
 import json
 import copy
 
+from .config import TEMPERATURE
+
 BEGIN = "___BEGIN__"
 END = "___END__"
 
@@ -103,21 +105,36 @@ class Chain:
         self.begin_cumdist = cumdist
         self.begin_choices = choices
 
-    def move(self, state):
+    def move(self, state, temperature=TEMPERATURE):
         """
         Given a state, choose the next item at random.
+        If temperature != 1.0, adjust the distribution accordingly.
         """
         if self.compiled:
             choices, cumdist = self.model[state]
+            weights = [cumdist[0]] + [cumdist[i] - cumdist[i - 1] for i in range(1, len(cumdist))]
         elif state == tuple([BEGIN] * self.state_size):
             choices = self.begin_choices
             cumdist = self.begin_cumdist
+            weights = [cumdist[0]] + [cumdist[i] - cumdist[i - 1] for i in range(1, len(cumdist))]
         else:
             choices, weights = zip(*self.model[state].items())
-            cumdist = list(accumulate(weights))
-        r = random.random() * cumdist[-1]
-        selection = choices[bisect.bisect(cumdist, r)]
-        return selection
+            weights = list(weights)
+
+        # Apply temperature scaling
+        if temperature != 1.0:
+            import math
+            weights = [w ** (1.0 / temperature) for w in weights]
+        total = sum(weights)
+        probs = [w / total for w in weights]
+
+        r = random.random()
+        cumulative = 0.0
+        for choice, prob in zip(choices, probs):
+            cumulative += prob
+            if r < cumulative:
+                return choice
+        return choices[-1]  # fallback
 
     def gen(self, init_state=None):
         """
